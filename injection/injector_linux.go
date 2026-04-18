@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,6 +29,15 @@ const (
 
 	// Used when NIC MTU is unknown or computed MSS would be invalid.
 	fallbackTCPPayloadMax = 1000
+
+	// sysctlNetNFQueueMaxLen is net.netfilter.nf_queue_maxlen (default queue depth for nfqueue).
+	sysctlNetNFQueueMaxLen = "/proc/sys/net/netfilter/nf_queue_maxlen"
+	// sysctlNetCoreRmemMax is net.core.rmem_max (caps SO_RCVBUF for netlink).
+	sysctlNetCoreRmemMax = "/proc/sys/net/core/rmem_max"
+
+	desiredNetlinkRcvBuf = 8 * 1024 * 1024
+	// Upper bound in case sysctl returns garbage.
+	maxReasonableNFQueueLen = 65536
 )
 
 // FakeTcpInjector intercepts TCP packets via nfqueue and injects fake
@@ -89,10 +101,16 @@ func NewFakeTcpInjector(interfaceIP, connectIP string, connectPort uint16) (*Fak
 	}
 
 	// Open nfqueue
+	maxQLen := nfqueueMaxQueueLenFromSysctl()
+	if maxQLen == 0 {
+		log.Printf("injector: nfqueue MaxQueueLen: default (unreadable sysctl %s)", sysctlNetNFQueueMaxLen)
+	} else {
+		log.Printf("injector: nfqueue MaxQueueLen: %d (from %s)", maxQLen, sysctlNetNFQueueMaxLen)
+	}
 	cfg := nfqueue.Config{
 		NfQueue:      nfqueueNum,
-		MaxPacketLen: 0xFFFF,
-		MaxQueueLen:  0xFF,
+		MaxPacketLen: maxIPv4DatagramLen(),
+		MaxQueueLen:  maxQLen,
 		Copymode:     nfqueue.NfQnlCopyPacket,
 	}
 	nf, err := nfqueue.Open(&cfg)
@@ -102,9 +120,67 @@ func NewFakeTcpInjector(interfaceIP, connectIP string, connectPort uint16) (*Fak
 		cancel()
 		return nil, fmt.Errorf("failed to open nfqueue: %w", err)
 	}
+	// Larger userspace recv buffer reduces "recvmsg: no buffer space available"
+	// when the kernel delivers nfqueue packets faster than we issue verdicts.
+	rcv := netlinkRecvBufFromSysctl()
+	if err := nf.Con.SetReadBuffer(rcv); err != nil {
+		log.Printf("injector: nfqueue SetReadBuffer(%d): %v (continuing with default)", rcv, err)
+	} else if rcv < desiredNetlinkRcvBuf {
+		log.Printf("injector: nfqueue recv buffer %d bytes (capped by %s; raise net.core.rmem_max for up to %d)",
+			rcv, sysctlNetCoreRmemMax, desiredNetlinkRcvBuf)
+	}
 	f.nf = nf
 
 	return f, nil
+}
+
+// sysctlUint32 reads a single positive decimal integer from a /proc/sys path.
+func sysctlUint32(path string) (uint32, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	s := strings.TrimSpace(string(b))
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(s, 10, 32)
+	if err != nil || v == 0 {
+		return 0, false
+	}
+	return uint32(v), true
+}
+
+// nfqueueMaxQueueLenFromSysctl returns net.netfilter.nf_queue_maxlen for nfqueue.Config,
+// or 0 so go-nfqueue uses its built-in default (1024) when the sysctl is missing or invalid.
+func nfqueueMaxQueueLenFromSysctl() uint32 {
+	v, ok := sysctlUint32(sysctlNetNFQueueMaxLen)
+	if !ok {
+		return 0
+	}
+	if v > maxReasonableNFQueueLen {
+		return maxReasonableNFQueueLen
+	}
+	return v
+}
+
+// maxIPv4DatagramLen is the maximum IPv4 total length (16-bit length field). NFQUEUE copy
+// length is not exposed as a separate sysctl; this matches the protocol maximum.
+func maxIPv4DatagramLen() uint32 {
+	return 0xFFFF
+}
+
+// netlinkRecvBufFromSysctl returns a recv buffer size capped by net.core.rmem_max so
+// SetReadBuffer is less likely to fail on strict sysctl defaults.
+func netlinkRecvBufFromSysctl() int {
+	max, ok := sysctlUint32(sysctlNetCoreRmemMax)
+	if !ok {
+		return desiredNetlinkRcvBuf
+	}
+	if int(max) < desiredNetlinkRcvBuf {
+		return int(max)
+	}
+	return desiredNetlinkRcvBuf
 }
 
 // nicMTUForLocalIPv4 returns the MTU of the interface that owns localIPv4, or 0.

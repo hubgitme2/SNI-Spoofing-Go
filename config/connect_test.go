@@ -53,3 +53,16 @@ func TestConnectFromCLI_IPWithFakeSNI(t *testing.T) {
 		t.Fatalf("ConnectIPv4s = %v", cfg.ConnectIPv4s)
 	}
 }
+
+func TestConnectFromCLIListenPortZeroOnlyWhenAllowed(t *testing.T) {
+	if _, err := ConnectFromCLI("127.0.0.1:0", "198.51.100.2:443", "allowed.example.com"); err == nil {
+		t.Fatal("expected listen port 0 to fail in normal mode")
+	}
+	cfg, err := ConnectFromCLIAllowListenPortZero("127.0.0.1:0", "198.51.100.2:443", "allowed.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ListenPort != 0 {
+		t.Fatalf("ListenPort = %d, want 0", cfg.ListenPort)
+	}
+}

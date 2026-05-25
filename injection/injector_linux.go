@@ -250,8 +250,6 @@ func (f *FakeTcpInjector) cleanupIptables() {
 	runCmd("iptables", "-D", "INPUT", "-p", "tcp",
 		"-s", f.connectIP, "--sport", port,
 		"-j", "NFQUEUE", "--queue-num", queueNum)
-
-	log.Print("iptables: cleaned")
 }
 
 func runCmd(name string, args ...string) error {
@@ -270,7 +268,9 @@ func (f *FakeTcpInjector) Start() error {
 			return 0
 		},
 		func(e error) int {
-			log.Printf("nfqueue error: %v", e)
+			if f.ctx.Err() == nil {
+				log.Printf("nfqueue error: %v", e)
+			}
 			return 0
 		},
 	)

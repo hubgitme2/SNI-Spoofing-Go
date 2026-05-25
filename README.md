@@ -67,6 +67,7 @@ Useful options:
 | Flag | Default | Meaning |
 | ---- | ------- | ------- |
 | `-config` | `./config.ini` if it exists | INI config file; CLI flags override file values |
+| `-test` | disabled | Run the built-in e2e test matrix for the selected `-connect`/`-fake-sni` pair, then exit |
 | `-fake-sni` | hostname from `-connect` | Decoy SNI used in the injected fake ClientHello |
 | `-fake-repeat` | `1` | Number of fake ClientHello injections |
 | `-fake-delay` | `2ms` | Delay after fake injection before forwarding real traffic |
@@ -92,6 +93,16 @@ sni-chunk = 3
 ```
 
 The repository includes `config.example.ini`; copy it to `config.ini` to use the automatic default config loading.
+
+Method test:
+
+```bash
+./sni-spoofing-linux-amd64 -test -connect 104.19.229.21:443 -fake-sni hcaptcha.com
+```
+
+`-test` first runs a preflight check for the selected upstream IP and fake SNI. The preflight confirms that the upstream path is reachable and compares the network-visible IPs used by the test; if the upstream path is unreachable or the known IPs differ, the method is not expected to work for that pair.
+
+After preflight, it runs an e2e matrix through the local tunnel. The matrix tries the supported TLS fingerprints with one or two fake injections, both with and without real ClientHello fragmentation. `PASS` means the local tunnel completed a real HTTPS request; `FAIL` means that combination did not work in the current network conditions. If every case fails, try a different upstream IP or fake SNI. If only some cases pass, use one of the passing combinations for normal runs.
 
 ### Docker (prebuilt image)
 

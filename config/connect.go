@@ -10,12 +10,24 @@ import (
 )
 
 func ConnectFromCLI(listenAddr, connectAddr, fakeSNIOverride string) (*Config, error) {
+	return connectFromCLI(listenAddr, connectAddr, fakeSNIOverride, false)
+}
+
+func ConnectFromCLIAllowListenPortZero(listenAddr, connectAddr, fakeSNIOverride string) (*Config, error) {
+	return connectFromCLI(listenAddr, connectAddr, fakeSNIOverride, true)
+}
+
+func connectFromCLI(listenAddr, connectAddr, fakeSNIOverride string, allowListenPortZero bool) (*Config, error) {
 	listenHost, listenPortStr, err := net.SplitHostPort(listenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen address %q: %w", listenAddr, err)
 	}
 	listenPort, err := strconv.Atoi(listenPortStr)
-	if err != nil || listenPort < 1 || listenPort > 65535 {
+	minListenPort := 1
+	if allowListenPortZero {
+		minListenPort = 0
+	}
+	if err != nil || listenPort < minListenPort || listenPort > 65535 {
 		return nil, fmt.Errorf("invalid listen port in %q", listenAddr)
 	}
 	connectHost, connectPortStr, err := net.SplitHostPort(connectAddr)

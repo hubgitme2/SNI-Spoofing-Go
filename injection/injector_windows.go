@@ -112,10 +112,13 @@ func (f *FakeTcpInjector) Close() {
 }
 
 func (f *FakeTcpInjector) sendPacket(raw []byte, addr *godivert.Address) error {
+	if f.shutdown.Load() {
+		return nil
+	}
 	f.sendMu.Lock()
 	_, err := f.wd.Send(raw, addr)
 	f.sendMu.Unlock()
-	if err != nil {
+	if err != nil && !f.shutdown.Load() {
 		log.Printf("WinDivert send error: %v", err)
 	}
 	return err

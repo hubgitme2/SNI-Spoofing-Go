@@ -17,7 +17,7 @@ func dialOutgoing(
 	fakeRepeat int,
 	fakeDelay, fragmentDelay time.Duration,
 	incomingSock net.Conn,
-	fakeInjector *injection.FakeTcpInjector,
+	fakeInjector injection.TCPInjector,
 ) (outgoingSock net.Conn, conn *injection.FakeInjectiveConnection, srcPort uint16, err error) {
 	targetAddr := net.JoinHostPort(connectIP, fmt.Sprintf("%d", connectPort))
 

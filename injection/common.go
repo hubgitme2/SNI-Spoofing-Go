@@ -10,6 +10,21 @@ import (
 
 type ConnID = connection.ConnID
 
+type TCPInjector interface {
+	Start() error
+	WaitInjectorReady() error
+	Close()
+	RegisterConn(conn *FakeInjectiveConnection)
+	UnregisterConn(conn *FakeInjectiveConnection)
+}
+
+type InjectorMode string
+
+const (
+	InjectorModeActive  InjectorMode = "active"
+	InjectorModePassive InjectorMode = "passive"
+)
+
 type FakeInjectiveConnection struct {
 	*connection.MonitorConnection
 

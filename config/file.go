@@ -16,6 +16,7 @@ type FileOptions struct {
 	FakeRepeat     int
 	FakeDelay      time.Duration
 	AckTimeout     time.Duration
+	Injector       string
 	UTLS           string
 	EnableFragment bool
 	FragmentDelay  time.Duration
@@ -108,6 +109,8 @@ func setFileOption(opts *FileOptions, key, val string) error {
 			return fmt.Errorf("ack-timeout: %w", err)
 		}
 		opts.AckTimeout = d
+	case "injector":
+		opts.Injector = val
 	case "utls":
 		opts.UTLS = val
 	case "enable-fragment":

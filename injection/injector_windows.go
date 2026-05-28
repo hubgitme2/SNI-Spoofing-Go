@@ -40,7 +40,14 @@ type FakeTcpInjector struct {
 	sendMu sync.Mutex
 }
 
-func NewFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16) (*FakeTcpInjector, error) {
+func NewFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16, mode InjectorMode) (TCPInjector, error) {
+	if mode == InjectorModePassive {
+		return newPassiveWinDivertInjector(interfaceIP, connectIPv4s, connectPort)
+	}
+	return newActiveWinDivertInjector(interfaceIP, connectIPv4s, connectPort)
+}
+
+func newActiveWinDivertInjector(interfaceIP string, connectIPv4s []string, connectPort uint16) (*FakeTcpInjector, error) {
 	if len(connectIPv4s) == 0 {
 		return nil, fmt.Errorf("no upstream IPv4 addresses")
 	}

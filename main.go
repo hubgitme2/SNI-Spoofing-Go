@@ -85,16 +85,18 @@ func main() {
 	flag.Usage = usage
 	var optListen, optConnect, optFakeSNI, optUTLS string
 	var enableFragment bool
+	var injectorMode string
 	var fragmentDelay time.Duration
 	var sniChunk int
 	var fakeRepeat int
 	var ackTimeout time.Duration
 	var fakeDelay time.Duration
 	var testMode bool
-	applyOptionDefaults(fileOpts, &optListen, &optConnect, &optFakeSNI, &optUTLS, &fakeRepeat, &fakeDelay, &ackTimeout, &enableFragment, &fragmentDelay, &sniChunk)
+	applyOptionDefaults(fileOpts, &optListen, &optConnect, &optFakeSNI, &optUTLS, &injectorMode, &fakeRepeat, &fakeDelay, &ackTimeout, &enableFragment, &fragmentDelay, &sniChunk)
 
 	flag.StringVar(&configPath, "config", configPath, "INI config file (default: ./config.ini if it exists)")
 	flag.BoolVar(&testMode, "test", false, "run e2e method test matrix for the selected upstream/decoy SNI pair, then exit")
+	flag.StringVar(&injectorMode, "injector", string(defaultInjectorMode()), "packet injector backend: active or passive")
 	flag.StringVar(&optListen, "listen", optListen, "listen address host:port (required)")
 	flag.StringVar(&optConnect, "connect", optConnect, "upstream host:port (required)")
 	flag.StringVar(&optFakeSNI, "fake-sni", optFakeSNI, "injected ClientHello SNI (optional if -connect uses a hostname)")
@@ -116,6 +118,7 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	requirePrivilegedOrExit()
 	if testMode {
 		optListen = effectiveListenAddr(optListen, true)
 	}
@@ -130,6 +133,10 @@ func main() {
 	}
 	if ackTimeout <= 0 {
 		log.Fatal("-ack-timeout must be positive (e.g. 2s, 5s, 1m)")
+	}
+	injector, err := parseInjectorMode(injectorMode)
+	if err != nil {
+		log.Fatal(err)
 	}
 	var cfg *config.Config
 	if testMode {
@@ -167,9 +174,10 @@ func main() {
 		fragmentDelay:  fragmentDelay,
 		sniChunk:       sniChunk,
 		ackTimeout:     ackTimeout,
+		injector:       injector,
 	}
 	if testMode {
-		if err := runMethodMatrix(cfg); err != nil {
+		if err := runMethodMatrix(cfg, injector); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			waitForExitKey()
 			os.Exit(1)
@@ -197,6 +205,31 @@ type proxyOptions struct {
 	sniChunk       int
 	ackTimeout     time.Duration
 	quiet          bool
+	injector       injection.InjectorMode
+}
+
+func parseInjectorMode(s string) (injection.InjectorMode, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", string(injection.InjectorModeActive):
+		return injection.InjectorModeActive, nil
+	case string(injection.InjectorModePassive):
+		return injection.InjectorModePassive, nil
+	default:
+		return "", fmt.Errorf("invalid -injector %q (want active or passive)", s)
+	}
+}
+
+func requirePrivilegedOrExit() {
+	ok, err := isPrivileged()
+	if err == nil && ok {
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Privilege check failed: %v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "This program needs elevated privileges; please %s.\n", privilegeHint())
+	waitForExitKey()
+	os.Exit(1)
 }
 
 type proxyReady struct {
@@ -213,7 +246,7 @@ func runProxy(ctx context.Context, cfg *config.Config, opts proxyOptions, ready 
 		log.Printf("iface: %s", interfaceIPv4)
 	}
 
-	fakeInjector, err := injection.NewFakeTcpInjector(interfaceIPv4, cfg.ConnectIPv4s, uint16(cfg.ConnectPort))
+	fakeInjector, err := injection.NewFakeTcpInjector(interfaceIPv4, cfg.ConnectIPv4s, uint16(cfg.ConnectPort), opts.injector)
 	if err != nil {
 		return fmt.Errorf("failed to create injector: %w", err)
 	}
@@ -285,7 +318,7 @@ func handleConnection(
 	cfg *config.Config,
 	interfaceIPv4 string,
 	fakeSNI string,
-	fakeInjector *injection.FakeTcpInjector,
+	fakeInjector injection.TCPInjector,
 	opts proxyOptions,
 ) {
 	defer func() {
@@ -421,7 +454,7 @@ func methodMatrixCases() []methodMatrixCase {
 	return out
 }
 
-func (c methodMatrixCase) proxyOptions() proxyOptions {
+func (c methodMatrixCase) proxyOptions(injector injection.InjectorMode) proxyOptions {
 	return proxyOptions{
 		fakeRepeat:     c.FakeRepeat,
 		fakeDelay:      10 * time.Millisecond,
@@ -430,6 +463,7 @@ func (c methodMatrixCase) proxyOptions() proxyOptions {
 		sniChunk:       3,
 		ackTimeout:     3 * time.Second,
 		quiet:          true,
+		injector:       injector,
 	}
 }
 
@@ -441,7 +475,7 @@ func (c methodMatrixCase) String() string {
 	return fmt.Sprintf("utls=%s repeat=%d fragment=%s", c.UTLS, c.FakeRepeat, fragment)
 }
 
-func runMethodMatrix(cfg *config.Config) error {
+func runMethodMatrix(cfg *config.Config, injector injection.InjectorMode) error {
 	fmt.Println("Preflight")
 	ok, err := checkMethodPreconditions(cfg.ConnectIP, cfg.FakeSNI)
 	if err != nil {
@@ -469,7 +503,7 @@ func runMethodMatrix(cfg *config.Config) error {
 		}
 
 		if err := runQuietly(func() error {
-			return runMethodE2E(&caseCfg, tc.proxyOptions())
+			return runMethodE2E(&caseCfg, tc.proxyOptions(injector))
 		}); err != nil {
 			fmt.Printf("%-8s %-11d %-8s %-6s\n", tc.UTLS, tc.FakeRepeat, fragmentLabel(tc.EnableFragment), "FAIL")
 			failed++
@@ -843,7 +877,7 @@ func configPathFromArgs(args []string) (path string, provided bool, err error) {
 
 func applyOptionDefaults(
 	fileOpts config.FileOptions,
-	optListen, optConnect, optFakeSNI, optUTLS *string,
+	optListen, optConnect, optFakeSNI, optUTLS, injectorMode *string,
 	fakeRepeat *int,
 	fakeDelay, ackTimeout *time.Duration,
 	enableFragment *bool,
@@ -874,6 +908,9 @@ func applyOptionDefaults(
 	if fileOpts.Has("ack-timeout") {
 		*ackTimeout = fileOpts.AckTimeout
 	}
+	if fileOpts.Has("injector") {
+		*injectorMode = fileOpts.Injector
+	}
 	if fileOpts.Has("utls") {
 		*optUTLS = fileOpts.UTLS
 	}
@@ -888,7 +925,7 @@ func applyOptionDefaults(
 	}
 }
 
-func stopMonitoring(fakeInjector *injection.FakeTcpInjector, conn *injection.FakeInjectiveConnection) {
+func stopMonitoring(fakeInjector injection.TCPInjector, conn *injection.FakeInjectiveConnection) {
 	conn.Mu.Lock()
 	conn.Monitor = false
 	conn.Mu.Unlock()

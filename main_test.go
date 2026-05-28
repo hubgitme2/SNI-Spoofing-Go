@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"sni-spoofing-go/config"
+	"sni-spoofing-go/injection"
 	"sni-spoofing-go/packet"
 )
 
@@ -51,7 +52,8 @@ enable-fragment = true
 	var fakeDelay, ackTimeout, fragmentDelay time.Duration
 	var enableFragment bool
 
-	applyOptionDefaults(fileOpts, &listen, &connect, &fakeSNI, &utls, &fakeRepeat, &fakeDelay, &ackTimeout, &enableFragment, &fragmentDelay, &sniChunk)
+	var injectorMode string
+	applyOptionDefaults(fileOpts, &listen, &connect, &fakeSNI, &utls, &injectorMode, &fakeRepeat, &fakeDelay, &ackTimeout, &enableFragment, &fragmentDelay, &sniChunk)
 
 	if listen != "127.0.0.1:8080" || connect != "example.com:443" || utls != "none" {
 		t.Fatalf("string defaults = %q %q %q", listen, connect, utls)
@@ -131,7 +133,7 @@ func TestMethodMatrixCases(t *testing.T) {
 
 	seen := make(map[string]bool)
 	for _, tc := range cases {
-		opts := tc.proxyOptions()
+		opts := tc.proxyOptions(injection.InjectorModeActive)
 		if opts.ackTimeout != 3*time.Second || opts.fakeDelay != 10*time.Millisecond ||
 			opts.fragmentDelay != 10*time.Millisecond || opts.sniChunk != 3 {
 			t.Fatalf("wrong constants for %s: %+v", tc.String(), opts)

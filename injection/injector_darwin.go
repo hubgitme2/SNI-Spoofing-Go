@@ -47,7 +47,10 @@ type FakeTcpInjector struct {
 	sendMu          sync.Mutex
 }
 
-func NewFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16) (*FakeTcpInjector, error) {
+func NewFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16, mode InjectorMode) (TCPInjector, error) {
+	if mode == InjectorModeActive {
+		return nil, fmt.Errorf("macOS only supports the passive injector")
+	}
 	if len(connectIPv4s) == 0 {
 		return nil, fmt.Errorf("no upstream IPv4 addresses")
 	}
@@ -167,13 +170,12 @@ func (f *FakeTcpInjector) onFrame(frame []byte) {
 	srcPort := packet.TCPSrcPort(ipPkt)
 	dstPort := packet.TCPDstPort(ipPkt)
 
-	if f.linkLen > 0 && ipv4Equal(srcIP, f.localIP) {
-		f.captureLinkHeader(frame)
-	}
-
 	conn, outbound, ok := f.lookupConnQuad(srcIP, srcPort, dstIP, dstPort)
 	if !ok {
 		return
+	}
+	if outbound && f.linkLen > 0 {
+		f.captureLinkHeader(frame)
 	}
 	conn.Mu.Lock()
 	defer conn.Mu.Unlock()

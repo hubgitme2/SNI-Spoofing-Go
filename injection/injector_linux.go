@@ -74,7 +74,14 @@ type FakeTcpInjector struct {
 	closeOnce       sync.Once
 }
 
-func NewFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16) (*FakeTcpInjector, error) {
+func NewFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16, mode InjectorMode) (TCPInjector, error) {
+	if mode == InjectorModePassive {
+		return newPassiveFakeTcpInjector(interfaceIP, connectIPv4s, connectPort)
+	}
+	return newNFQueueFakeTcpInjector(interfaceIP, connectIPv4s, connectPort)
+}
+
+func newNFQueueFakeTcpInjector(interfaceIP string, connectIPv4s []string, connectPort uint16) (*FakeTcpInjector, error) {
 	if len(connectIPv4s) == 0 {
 		return nil, fmt.Errorf("no upstream IPv4 addresses")
 	}

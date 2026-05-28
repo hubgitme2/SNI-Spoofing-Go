@@ -17,6 +17,7 @@ fake_sni = allowed.example.com
 fake-repeat = 2
 fake-delay = 5ms
 ack-timeout = 3s
+injector = passive
 utls = none
 enable-fragment = yes
 fragment-delay = 250ms
@@ -34,6 +35,9 @@ sni-chunk = 4
 	}
 	if opts.FakeRepeat != 2 || opts.FakeDelay != 5*time.Millisecond || opts.AckTimeout != 3*time.Second {
 		t.Fatalf("timing/repeat options = %+v", opts)
+	}
+	if opts.Injector != "passive" {
+		t.Fatalf("injector option = %q", opts.Injector)
 	}
 	if opts.UTLS != "none" || !opts.EnableFragment || opts.FragmentDelay != 250*time.Millisecond || opts.SNIChunk != 4 {
 		t.Fatalf("fragment/utls options = %+v", opts)
